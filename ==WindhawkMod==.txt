@@ -1,0 +1,301 @@
+// ==WindhawkMod==
+// @id              universal-glass-effect
+// @name            Universal Glass Effect
+// @description     Applies Acrylic blur and transparency to application windows
+// @version         1.0
+// @author          Custom
+// @include         *
+// @compilerOptions -luser32
+// ==/WindhawkMod==
+
+#include <windows.h>
+#include <windhawk_api.h>
+
+// ==========================================
+// CONFIGURAÇÕES
+// ==========================================
+
+// Intensidade do efeito:
+// 0x66 = mais transparente
+// 0x99 = transparência média
+// 0xCC = menos transparente
+//
+// A última parte define a tonalidade.
+// 0x99000000 = vidro escuro
+// 0x99FFFFFF = vidro claro
+
+#define GLASS_COLOR 0x99000000
+
+// ==========================================
+// ESTRUTURAS DO EFEITO ACRYLIC
+// ==========================================
+
+enum WINDOWCOMPOSITIONATTRIB {
+    WCA_ACCENT_POLICY = 19
+};
+
+enum ACCENT_STATE {
+    ACCENT_DISABLED = 0,
+    ACCENT_ENABLE_GRADIENT = 1,
+    ACCENT_ENABLE_TRANSPARENTGRADIENT = 2,
+    ACCENT_ENABLE_BLURBEHIND = 3,
+    ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
+};
+
+struct ACCENT_POLICY {
+    int AccentState;
+    int AccentFlags;
+    DWORD GradientColor;
+    int AnimationId;
+};
+
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    WINDOWCOMPOSITIONATTRIB Attribute;
+    PVOID Data;
+    SIZE_T SizeOfData;
+};
+
+// ==========================================
+// FUNÇÃO DO WINDOWS
+// ==========================================
+
+typedef BOOL(WINAPI* SetWindowCompositionAttribute_t)(
+    HWND,
+    WINDOWCOMPOSITIONATTRIBDATA*
+);
+
+static SetWindowCompositionAttribute_t
+    SetWindowCompositionAttribute_Original = nullptr;
+
+// ==========================================
+// APLICAR EFEITO GLASS
+// ==========================================
+
+void ApplyGlass(HWND hwnd) {
+
+    if (!hwnd || !IsWindow(hwnd)) {
+        return;
+    }
+
+    // Ignorar janelas-filhas.
+    LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+
+    if (style & WS_CHILD) {
+        return;
+    }
+
+    if (!SetWindowCompositionAttribute_Original) {
+        return;
+    }
+
+    ACCENT_POLICY policy = {};
+
+    policy.AccentState =
+        ACCENT_ENABLE_ACRYLICBLURBEHIND;
+
+    policy.AccentFlags = 2;
+
+    policy.GradientColor = GLASS_COLOR;
+
+    policy.AnimationId = 0;
+
+    WINDOWCOMPOSITIONATTRIBDATA data = {};
+
+    data.Attribute = WCA_ACCENT_POLICY;
+    data.Data = &policy;
+    data.SizeOfData = sizeof(policy);
+
+    SetWindowCompositionAttribute_Original(
+        hwnd,
+        &data
+    );
+}
+
+// ==========================================
+// APLICAR A JANELAS JÁ ABERTAS
+// ==========================================
+
+BOOL CALLBACK EnumWindowsCallback(
+    HWND hwnd,
+    LPARAM lParam
+) {
+
+    ApplyGlass(hwnd);
+
+    return TRUE;
+}
+
+void ApplyGlassToAllWindows() {
+
+    EnumWindows(
+        EnumWindowsCallback,
+        0
+    );
+}
+
+// ==========================================
+// INTERCEPTAR CRIAÇÃO DE JANELAS
+// ==========================================
+
+static HWND(WINAPI* CreateWindowExW_Original)(
+    DWORD,
+    LPCWSTR,
+    LPCWSTR,
+    DWORD,
+    int,
+    int,
+    int,
+    int,
+    HWND,
+    HMENU,
+    HINSTANCE,
+    LPVOID
+) = nullptr;
+
+HWND WINAPI CreateWindowExW_Hook(
+    DWORD dwExStyle,
+    LPCWSTR lpClassName,
+    LPCWSTR lpWindowName,
+    DWORD dwStyle,
+    int X,
+    int Y,
+    int nWidth,
+    int nHeight,
+    HWND hWndParent,
+    HMENU hMenu,
+    HINSTANCE hInstance,
+    LPVOID lpParam
+) {
+
+    HWND hwnd = CreateWindowExW_Original(
+        dwExStyle,
+        lpClassName,
+        lpWindowName,
+        dwStyle,
+        X,
+        Y,
+        nWidth,
+        nHeight,
+        hWndParent,
+        hMenu,
+        hInstance,
+        lpParam
+    );
+
+    if (hwnd) {
+        ApplyGlass(hwnd);
+    }
+
+    return hwnd;
+}
+
+// ==========================================
+// VERSÃO ANSI
+// ==========================================
+
+static HWND(WINAPI* CreateWindowExA_Original)(
+    DWORD,
+    LPCSTR,
+    LPCSTR,
+    DWORD,
+    int,
+    int,
+    int,
+    int,
+    HWND,
+    HMENU,
+    HINSTANCE,
+    LPVOID
+) = nullptr;
+
+HWND WINAPI CreateWindowExA_Hook(
+    DWORD dwExStyle,
+    LPCSTR lpClassName,
+    LPCSTR lpWindowName,
+    DWORD dwStyle,
+    int X,
+    int Y,
+    int nWidth,
+    int nHeight,
+    HWND hWndParent,
+    HMENU hMenu,
+    HINSTANCE hInstance,
+    LPVOID lpParam
+) {
+
+    HWND hwnd = CreateWindowExA_Original(
+        dwExStyle,
+        lpClassName,
+        lpWindowName,
+        dwStyle,
+        X,
+        Y,
+        nWidth,
+        nHeight,
+        hWndParent,
+        hMenu,
+        hInstance,
+        lpParam
+    );
+
+    if (hwnd) {
+        ApplyGlass(hwnd);
+    }
+
+    return hwnd;
+}
+
+// ==========================================
+// INICIALIZAÇÃO
+// ==========================================
+
+BOOL Wh_ModInit() {
+
+    HMODULE user32 = GetModuleHandleW(
+        L"user32.dll"
+    );
+
+    if (!user32) {
+        return FALSE;
+    }
+
+    SetWindowCompositionAttribute_Original =
+        (SetWindowCompositionAttribute_t)
+        GetProcAddress(
+            user32,
+            "SetWindowCompositionAttribute"
+        );
+
+    if (!SetWindowCompositionAttribute_Original) {
+        Wh_Log(L"SetWindowCompositionAttribute não disponível.");
+        return FALSE;
+    }
+
+    Wh_SetFunctionHook(
+        (void*)CreateWindowExW,
+        (void*)CreateWindowExW_Hook,
+        (void**)&CreateWindowExW_Original
+    );
+
+    Wh_SetFunctionHook(
+        (void*)CreateWindowExA,
+        (void*)CreateWindowExA_Hook,
+        (void**)&CreateWindowExA_Original
+    );
+
+    // Aplicar às janelas que já estão abertas.
+    ApplyGlassToAllWindows();
+
+    Wh_Log(L"Universal Glass Effect iniciado.");
+
+    return TRUE;
+}
+
+// ==========================================
+// FINALIZAÇÃO
+// ==========================================
+
+void Wh_ModUninit() {
+
+    Wh_Log(L"Universal Glass Effect terminado.");
+}
